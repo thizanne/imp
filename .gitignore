@@ -1,0 +1,16 @@
+tutoriel
+tutoriel/*
+_build/*
+*~
+#*#
+*.a
+*.native
+*.byte
+*.cma
+*.cmi
+*.cmo
+*.cmx
+*.cmxa
+*.o
+parser.ml
+lexer.ml
