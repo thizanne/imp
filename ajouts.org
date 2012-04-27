@@ -1,0 +1,8 @@
+- opérations manquantes : <,  <=, >=, !=, division (attention à zéro)
+- raccourcis &&, || et !
+- pouvoir affecter une bexp à une variable
+- boucles for
+- autres types de base : flottants, chaînes de caractères...
+- type structurés : tableaux, listes
+- goto
+- procédures (environnement !)

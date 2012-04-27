@@ -1,0 +1,19 @@
+// On initialise les variables
+n := 5
+f := 1
+
+/* 
+  boucle principale
+  /* commentaire imbriqué */
+*/
+
+while n > 0 {
+    f := f * n
+    n := n - 1		
+    }
+
+
+print f
+/* On peut même print-er des expressions numériques */
+print 3 + 4 * 5
+   
