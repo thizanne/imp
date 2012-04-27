@@ -1,0 +1,926 @@
+#+LaTeX_CLASS:article
+#+TITLE:Interpréter un petit langage impératif
+
+* Introduction
+
+Vous avez appris un langage de programmation, vous avez écrit plein de
+jolies choses avec. Une fois vos codes écrits, vous utilisiez un
+programme externe pour les exécuter (ou les compiler puis les
+exécuter). Vous avez même peut-être travaillé avec succès sur des gros
+projets qui ont fait appel à toutes vos connaissances de votre langage
+favori. Tout cela est très bien. Mais savez-vous comment ce programme
+externe avait lui-même été créé ?
+
+Si vous n'en avez aucune idée, ou que vous êtes tout simplement
+curieux de le savoir, vous êtes au bon endroit. Cet article vous
+montrera en détail comment interpréter un petit langage impératif,
+sous forme de cours-TP où nous mettrons cela en place ensemble.
+
+* Prérequis
+
+Interpréter un langage n'est pas quelque chose de très compliqué
+(surtout si le langage est suffisamment simple), mais vous devez tout
+de même savoir certaines choses. Concrètement, vous serez capable de
+lire et de comprendre ce cours si vous maîtrisez un minimum le langage
+OCaml. Notamment, vous devez être bien à l'aise avec les types
+récursifs (définition et utilisation), et savoir appliquer ces
+connaissances à la manipulation d'arbres. Vous devez également
+connaître les bases des entrées/sorties (notamment la lecture dans un
+fichier). Enfin, il est plus que recommandé de connaître les bases
+d'un langage impératif, par exemple le C ou le Python.
+
+* Commençons !
+
+** Comment nous fonctionnerons
+
+Ce « cours » est écrit sous la forme d'un TP : en le parcourant, nous
+construirons progressivement notre interpréteur. Les explications
+pratiques du fonctionnement des outils se font beaucoup à partir du
+code, et vous avez à la fin de chaque partie la source complète du
+fichier final que nous aurons écrit. Cela veut dire que, bien sûr,
+vous pouvez vous contenter de faire un copier-coller des différents
+fichiers et des commandes pour arriver à obtenir un interpréteur qui
+fonctionne. Ce serait cependant dommage pour vous : je vous encourage
+à essayer au maximum de coder par vous-mêmes, et à vous servir du
+corrigé quand vous n'arrivez pas à comprendre quelque chose ou que
+vous voulez comparer votre solution. Bref, il est là volontairement,
+mais vous apprendrez plus si vous le copiez le moins possible.
+
+** Notre langage
+
+Avant de commencer à implémenter notre langage, nous allons choisir à
+quoi il va ressembler. Nous ferons quelque chose de simple :
+nous allons écrire un interpréteur pour un langage impératif
+minimaliste.
+
+Voici donc les éléments de base de notre langage :
+
+- les entiers, qui seront soit écrits directement, soit contenus dans
+  des variables
+- les opérations =+=, =-= et =*= sur les entiers
+- les booléens, incluant =true=, =false= et la comparaison =>= sur les
+  entiers
+- les opérations =and=, =or= et =not= sur les booléens
+- les boucles =while=
+- les conditions =if=
+- une instruction =print= pour afficher un entier
+
+Les opérations sur les entiers et les booléens seront régies par les
+règles de priorité usuelles. Pour agir sur ces priorités, on pourra
+utiliser les parenthèses. Pour affecter une valeur à une variable, on
+utilisera =:== (la création de la variable sera effectuée à sa
+première affectation, comme en Python par exemple).
+
+Et, comme tout langage qui se respecte (et le nôtre se respecte
+particulièrement, s'il vous plaît !), nous aurons des commentaires :
+=//= pour un commentaire sur une ligne, et =/* ... */= pour des
+commentaires multi-lignes.
+
+Voilà un exemple de code pour que vous visualisiez bien la syntaxe
+(qui est très simple) :
+
+#+begin_src c
+// On initialise les variables
+n := 5
+f := 1
+
+/*
+  boucle principale
+  /* commentaire imbriqué */
+*/
+
+while n > 0 {
+    f := f * n
+    n := n - 1
+    }
+
+
+print f
+/* On peut même print-er des expressions numériques */
+print 3 + 4 * 5
+
+#+end_src
+
+
+** Les différentes étapes de l'interprétation
+
+Pour comprendre les différentes étapes de l'interprétation d'un
+programme, il est souvent pratique de faire la comparaison avec la
+langue que vous parlez tous les jours. Imaginez que vous discutiez
+avec un ami, et qu'il vous dise « Le français est une belle langue
+». Si vous, vous comprenez tout de suite cette phrase, ce n'est pas le
+cas de votre ordinateur. Voilà les étapes qu'il suivra pour en
+déchiffrer le sens :
+
+- Initialement, il ne connaît qu'une suite de
+  caractères. Parallèlement, c'est comme si vous en étiez au stade où
+  vous avez compris : « leufranssèhètunebèlelang ».
+
+- La première étape est *l'analyse lexicale* : la phrase sera découpée
+  en une suite de mots connus. Vous savez alors que votre ami a
+  prononcé successivement les mots « le », « français », « est », «
+  une », « belle » et « langue ». Vous connaissez alors la nature de
+  chaque mot individuellement (« le » est un article défini, «
+  français » est un substantif...), mais vous ne savez pas encore
+  comment ils sont reliés entre eux.
+
+- La deuxième étape est *l'analyse syntaxique*. À partir de votre
+  suite de mots, vous construisez des phrases. Vous savez maintenant
+  que « le français » est un groupe nominal, et qu'il est sujet du
+  verbe « est ». Mais vous ne savez toujours pas quel sens a cette
+  phrase.
+
+- La dernière étape est *l'analyse sémantique*. Maintenant que vous
+  connaissez la structure de la phrase, vous pouvez comprendre ce
+  qu'elle veut dire. En puisant dans votre vocabulaire, vous savez
+  maintenant que votre ami vous a indiqué que la langue que vous
+  parlez, le français, a des caractéristiques qui la rendent
+  tout à fait intéressante.
+
+Votre interpréteur fonctionnera (presque) exactement de cette
+façon. Si vous ne voyez pas encore parfaitement comment tout cela va
+s'agencer, ce n'est pas grave : vous comprendrez vraiment une fois
+quue nous aurons réalisé chacune de ces composantes. Il est simplement
+important de retenir que l'interprétation se fera en 3 étapes, qui ont
+chacune un rôle bien précis et qui agissent sur le résultat de l'étape
+précédente.
+
+* L'analyse lexicale
+
+** Mots, lexèmes et découpage
+
+Il est maintenant temps de commencer la réalisation de notre
+interpréteur. Comme nous l'avons vu plus haut, la première étape est
+celle de l'analyse lexicale, qui consiste à découper notre code source
+en « mots » de notre langage.
+
+Plus exactement, l'analyseur lexical (on entend souvent le terme
+anglais /lexer/) va prendre en entrée une chaîne de caractères, qui
+sera notre code source, et produire en sortie une suite de « lexèmes »
+(les anglophones vous parleront de /tokens/), qui seront les « mots »
+ou « unités lexicales » de notre langage.
+
+Les lexèmes seront tout simplement définis par un type énuméré :
+
+#+begin_src caml
+type token =
+  | True
+  | False
+  | Not
+  | And
+  | Or
+  | Greater
+  | Equal
+  | LeftPar
+  | RightPar
+  | LeftCurly   (* { *)
+  | RightCurly  (* } *)
+  | Affect      (* := *)
+  | If
+  | While
+  | Print
+  | Plus
+  | Times
+  | Minus
+  | Int of int
+  | Var of string
+  | Eof         (* Fin de fichier *)
+#+end_src
+
+Par exemple, au code suivant :
+
+#+begin_src c
+while n > 0 {
+    n := n - 1
+    }
+#+end_src
+
+Correspondra la liste de lexèmes suivantes :
+
+#+begin_src caml
+[While; Var "n"; Greater; Int 0; LeftCurly; Var "n"; Affect; Var "n"; Minus; Int 1; RightCurly; Eof]
+#+end_src
+
+Remarquez qu'on n'a pas défini de lexème pour nos commentaires : en
+effet, on les retirera du code à traiter dès l'analyse lexicale, pour
+ne plus avoir à s'en préoccuper après.
+
+Nous connaissons donc l'ensemble de nos lexèmes. Il nous faut
+maintenant écrire les correspondances avec les chaînes de caractères
+de notre code source. On pourrait imaginer écrire une simple fonction,
+prenant comme argument un chaîne de caractères, et renvoyant le lexème
+correspondant. Pour certains, ça fonctionnerait très bien : par
+exemple ="while"= se convertit très simplement en =While=. Mais
+comment ferait-on pour les variables par exemple ? On ne peut
+évidemment pas écrire un cas pour chaque nom de variable possible,
+puisqu'il y en a une infinité... En fait, il faut trouver un moyen de
+décrire les chaînes de caractères « qui sont une suite de lettres ou
+de chiffres commençant par une lettre ». Idem pour les nombres : un
+entier, c'est « une suite de chiffres ».
+
+Alors bien sûr, on pourrait encore une fois écrire une fonction qui
+indique si une chaîne de caractère correspond bien au motif d'une
+variable. Ça marcherait plus ou moins, et on pourrait s'en tirer
+honorablement pour trouver le lexème correspondant à un bout de chaîne
+donné. Mais on n'est pas plus avancé : comment savoir quelle partie du
+code source fournir à cette fonction pour déterminer le lexème en
+question ? Si mon code est ~resultat := resultat + 4~, comment décider
+si le prochain lexème à analyser correspondra à =resultat=, =r= ou
+=resultat := ?
+
+** Les expressions rationnelles
+
+La solution à ce double problème existe environ depuis les années 1940
+(!!), et elle s'appelle « expressions rationnelles ». Vous en avez
+peut-être déjà entendu parler (on les appelle parfois « expressions
+régulières », ou « regex » en anglais) : c'est à la fois un objet
+théorique intéressant à étudier, et un outil pratique qui est très
+puissant lorsqu'on s'en sert correctement mais que les programmeurs
+d'aujourd'hui ont tendance à utiliser pour tout et n'importe quoi. Du
+coup, on en retrouve beaucoup de versions mutantes à des endroits où
+elles ne devraient pas être et où elles compliquent beaucoup le code
+et sa maintenance, et c'est probablement ce à quoi elles doivent leur
+réputation assez sulfureuse auprès de nombreux programmeurs.
+
+La théorie des expressions rationnelles n'est pas spécialement
+compliquée mais est trop longue pour entrer entièrement dans cet
+article. J'en ferai tout de même une présentation rapide, mais je vous
+encourage vivement à vous renseigner dessus par vous-mêmes, ne
+serait-ce que parce que ça fait partie du bagage culturel que vous
+devriez posséder.
+
+Pour ceux qui connaissent déjà les expressions régulières, il est
+important que vous lisiez quand même cette partie : la syntaxe que
+nous utiliserons diffère légèrement des syntaxes « classiques » que
+vous connaissez peut-être (qu'on rencontre par exemple avec Python,
+Perl ou sed).
+
+La première chose que vous devrez retenir concernant les expressions
+régulières, c'est qu'une expression régulière est un « objet »
+informatique (dans le sens « un truc », ça n'a pas de rapport direct
+avec la programmation objet) qui va servir à « décrire » des chaînes
+de caractères qui correspondent à un certain « motif ».
+
+L'expression régulière la plus simple a justement la forme d'une
+chaîne de caractères, et elle décrit la chaîne correspondante. Par
+exemple, l'expression régulière ="we don't need no thought control"=
+décrira la chaîne de caractères ="we don't need no thought control"=.
+
+Ces expressions-chaînes de caractères suivent les mêmes règles que les
+chaînes de caractères d'OCaml. Par exemple, l'expression ="\n"=
+décrira une chaîne de caractères ne contenant qu'un retour à la
+ligne. J'attire ici l'attention de ceux qui ont déjà joué avec des
+expressions régulières : ="a*"=, par exemple, décrira la chaîne de
+caractères ="a*"=, et pas par exemple la chaîne ="aaaaa"= (si vous ne
+comprenez pas pourquoi je dis ça, ignorez simplement cette phrase pour
+l'instant).
+
+Si votre expression régulière-chaîne de caractères ne contient qu'un
+seul caractère, vous pouvez l'écrire en suivant la syntaxe du type
+=char= d'OCaml : ainsi, ='a'= décrira la chaîne ="a"=.
+
+Si vous souhaitez décrire plusieurs chaînes différentes, vous pourrez
+utiliser un caractère spécial des expressions régulières : le tube
+=|=. Il s'interpose simplement entre deux expressions régulières, et
+l'expression globale obtenue décrit toutes les chaînes décrites soit
+par la première, soit par la seconde sous-expression. Ainsi,
+l'expression régulière ="mer" | "montagne"= décrira les chaînes de
+caractères ="mer"= et ="montagne"=. Vous pouvez regrouper ainsi
+plusieurs expressions : ="mer" | "montagne" | "lagon"= décrira les 3
+chaînes de caractères que vous devinez.
+
+Vous pouvez coller deux expression régulières l'une après l'autre :
+="côté " ("mer" | "montagne")= décrira les deux chaînes ="côté mer"=
+et ="côté montagne"=. Vous aurez remarqué l'usage des parenthèses pour
+gérer les priorités : la concaténation de deux expressions régulières
+est prioritaire sur l'union =|=.
+
+Le deuxième caractère spécial est l'étoile =*= (non, elle ne s'appelle
+pas astérisque quand on parle d'expressions rationnelles). Elle
+s'appose après une expression régulière, pour décrire 0 ou plusieurs
+occurrences de cette expression. Ainsi, ="na"*= décrira les chaînes
+=""=, ="na"=, ="nananana"=... Vous pouvez bien sûr combiner plusieurs
+des constructions que nous avons vues : ="na"* " "("bat" | "spider")
+"man"= décrira les chaînes ="nanananana batman"=, ="na spiderman"=...
+
+Le caractère spécial =+= fonctionne de la même façon que l'étoile,
+mais sert à faire correspondre une ou plusieurs occurrences de
+l'expression à laquelle il est appliqué (autrement dit, il ne permet
+pas de décrire la chaîne vide =""=). Le caractère =?= fait lui
+correspondre 0 ou 1 occurrence.
+
+Un concept important pour nos expressions régulières est celui de «
+classe ». Une classe est un ensemble d'expressions-caractères (par
+exemple, ='a'=) entre crochets, éventuellement composée aussi de
+nouveaux symboles spéciaux. Sans ceux-ci, c'est une autre façon
+d'écrire une union : =['a' 'e' 'i' 'o' 'u' 'y']= est équivalent à
+=("a" | "e" | "i" | "o" | "u" | "y")=.
+
+On peut utiliser le caractère spécial =^= juste après le crochet
+ouvrant pour faire la négation d'une classe : =[^ '\n']= décrira
+toutes les chaînes, sauf celles composées uniquement d'un retour à la
+ligne.
+
+Enfin, on peut utiliser le caractère tiret =-= pour décrire une série
+de caractères « compris » entre deux : =['a' - 'e']= décrira ="a"=,
+="b"=, ="c"=, ="d"= et ="e"=.
+
+Une fois que vous saurez que le caractère spécial =_= peut servir, un
+peu comme dans les =match= d'OCaml, à décrire n'importe quelle chaîne,
+vous connaîtrez tout des expressions régulières (enfin, non, ce n'est
+pas vrai. Mais vous en connaîtrez suffisamment pour ce qui nous
+concerne. Je vous engage toutefois vivement à vous renseigner un peu
+plus en détail dessus).
+
+** Ocamllex
+
+*** Le commencement
+
+Nous avons maintenant notre outil théorique qui nous permettra de
+découper notre code en unités lexicales. Reste à savoir comment
+l'utiliser en pratique. Bien sûr, nous pourrions implémenter
+nous-mêmes notre moteur d'expressions régulières et l'analyseur
+syntaxique qui va avec. C'est d'ailleurs un travail intéressant que je
+vous encourage à faire quand vous maîtriserez le sujet.
+
+L'ennui, c'est que ça demande beaucoup de travail alors qu'il y a des
+outils tout prêts. Celui que nous utiliserons pour nous simplifier la
+vie s'appelle *ocamllex*.
+
+C'est un « générateur d'analyseur lexical » : à partir d'un
+ensemble de règles associant des expressions régulières aux lexèmes
+qu'ils décrivent, il génère une fonction OCaml qui permet, à partir
+d'un code source, de générer la suite de lexèmes correspondant.
+
+Ocamllex est fourni avec l'installation standard d'OCaml, pas besoin
+donc d'installation supplémentaire. Vous pouvez vérifier qu'il est
+bien disponible sur votre machine en tapant la commande ~ocamllex~,
+qui devrait vous afficher la liste des options disponibles.
+
+Avant de commencer, reprenez le type énuméré des lexèmes que nous
+avons défini plus haut, et écrivez-le dans un fichier
+~tokens.ml~. Pour rappel, ce type était :
+
+#+begin_src caml
+type token =
+  | True
+  | False
+  | Not
+  | And
+  | Or
+  | Greater
+  | Equal
+  | LeftPar
+  | RightPar
+  | LeftCurly   (* { *)
+  | RightCurly  (* } *)
+  | Affect      (* := *)
+  | If
+  | While
+  | Print
+  | Plus
+  | Times
+  | Minus
+  | Int of int
+  | Var of string
+  | Eof         (* Fin de fichier *)
+#+end_src
+
+Notre analyseur lexical se servira de ce fichier pour connaître les
+différents lexèmes qu'il est susceptible de produire. Par convention,
+notre code ocamllex s'écrit dans un fichier *.mll. Créez donc un
+fichier que vous appellerez par exemple « lexer.mll ».
+
+Il est maintenant temps d'écrire notre analyseur. Quand vous écrivez
+du code OCaml, l'élément principal est une fonction :
+
+#+begin_src caml
+let ma_fonction = function
+  | antécédent1 -> résultat1
+  | antécédent2 -> résultat2
+#+end_src
+
+Le code Ocamllex ressemble un peu à ça. L'élément principal s'appelle
+une règle, les antécédents sont des expressions régulières et les
+résultats sont les lexèmes correspondants. La syntaxe est la suivante :
+
+#+begin_src caml
+rule ma_règle = parse
+  | expression1 { Lexeme1 }
+  | expression2 { Lexeme2 }
+#+end_src
+
+À partir de ces différentes correspondances, ocamllex construira une
+fonction OCaml (dont nous verrons le type exact plus tard) qui, à
+partir d'un code donné, renvoie le lexème suivant (et retire les
+caractères correspondants du code). Pour qu'il puisse connaître les
+lexèmes, il faut que le type ait été déclaré quelque part, comme dans
+un fichier OCaml classique. Pour cela, OCamllex permet d'écrire du
+code OCaml en tête de fichier, entre accolades.
+
+*** Les mots-clefs
+
+Voyons ça tout de suite en pratique avec la règle qui analyse tous les
+mots réservés de notre langage :
+
+#+begin_src caml
+{
+  open Tokens
+  exception LexingError
+}
+
+rule lexer = parse
+  | eof { Eof }
+  | "true" { True }
+  | "false" { False }
+  | "not" { Not }
+  | "and" { And }
+  | "or" { Or }
+  | "if" { If }
+  | "while" { While }
+  | "print" { Print }
+  | "(" { LeftPar }
+  | ")" { RightPar }
+  | "{" { LeftCurly }
+  | "}" { RightCurly }
+  | "+" { Plus }
+  | "*" { Times }
+  | "-" { Minus }
+  | ">" { Greater }
+  | "=" { Equal }
+  | ":=" { Affect }
+#+end_src
+
+Vous remarquerez qu'on ouvre en tête le fichier le module Tokens, qui
+correspond donc au fichier ~tokens.ml~ écrit plus haut. On définit
+également une exception =LexingError= qui nous servira plus tard en
+cas d'erreur lexicale.
+
+En plus des quelques mots réservés de notre langage, vous avez
+remarqué la présence de l'antécédent =eof=. C'est un mot-clef OCamllex
+qui indique la fin de fichier : il est important de renvoyer le lexème
+correspondant, que nous avons appelé =Eof=, sinon vous aurez des
+problèmes lors de la phase d'analyse syntaxique (qui ne saura pas bien
+s'arrêter). Le reste du code est assez simple pour être compris sans
+commentaires.
+
+*** Les nombres, la première loi et les alias
+
+Passons maintenant aux nombres. Comme nous l'avons vu plus haut, nous
+ne gèrerons que des nombres entiers, qui seront donc une suite d'un ou
+plusieurs chiffres, un chiffre étant compris entre ='0'= et ='9'= pour
+l'ordre des caractères. Ça tombe bien, nous savons décrire ces
+caractères, et nous savons aussi comment exprimer "1 ou
+plusieurs". L'expression régulière permettant de décrire nos nombres
+est donc, si vous avez bien suivi, =['0' - '9']+=. Il nous reste donc
+à écrire le lexème produit. Pour cela, OCamllex nous permet de
+désigner la chaîne de caractères correspondante à l'aide du mot-clef
+=as=. Nous écrirons donc :
+
+#+begin_src caml
+rule lexer = parse
+  | ...
+  | ['0' - '9']+ as n { Int (int_of_string n) }
+#+end_src
+
+Notez donc l'utilisation du =as=, et n'oubliez pas de convertir la
+chaîne =n= en entier : notre lexème =Int= attend en effet un paramètre
+de type =int=.
+
+Un premier problème se pose ici : notre analyseur reconnaît, pour les
+nombres, une suite de 1 ou plusieurs chiffres. Comment savoir où il va
+s'arrêter ? Par exemple, si notre code contient ~a := 123~ et qu'il en
+est au =123=, comment saura-t-il s'il doit traduire =1=, =12= ou =123= ?
+
+La solution à ce problème est apportée par la loi de la plus longue
+correspondance. C'est la première loi que suivra notre analyseur en
+cas d'ambiguité : comme son nom l'indique, elle précise que la chaîne
+de caractères correspondant au lexème produit à une certaine étape est
+toujours la plus longue que l'anayseur lexical peut reconnaître à
+cette étape. Ainsi, dans l'exemple précédent, la chaîne reconnue était
+=123=.
+
+Cette loi est l'occasion pour nous de parler un (tout) petit peu du
+fonctionnement interne de notre analyse lexicale. À l'aide d'objets
+informatiques appelés automates finis, qui sont très fortement liés
+aux expressions rationnelles, l'analyseur parcourt chaque caractère de
+la chaîne jusqu'à ce que la sous-chaîne entre le début de la chaîne
+principale et le caractère courant ne puisse plus constituer le début
+d'une chaîne reconnue par l'automate. L'analyseur renvoie alors la
+dernière chaîne rencontrée qu'il reconnaissait comme correspondant à
+un lexème.
+
+Nous allons maintenant introduire une autre possibilité offerte par
+OCamllex : les alias. Ils permettent de nommer des expressions
+régulières afin de s'en resservir par la suite sans avoir à les
+réécrire à chaque fois. En plus du gain de place pour des grosses
+expressions souvent réutilisées, ils permettent souvent d'améliorer la
+lisibilité. Ici, nous allons définir un alias « chiffre ». On utilise
+pour cela le mot-clef =let=, comme en OCaml, et on déclare l'alias
+avant son utilisation (donc ici entre le code OCaml initial et notre
+règle). Voilà donc l'état actuel de notre fichier :
+
+#+begin_src caml
+{
+  open Parser
+  exception LexingError
+}
+
+let digits = ['0' - '9']
+
+rule lexer = parse
+  | eof { Eof }
+  | "true" { True }
+  | "false" { False }
+  | "not" { Not }
+  | "and" { And }
+  | "or" { Or }
+  | "if" { If }
+  | "while" { While }
+  | "print" { Print }
+  | "(" { LeftPar }
+  | ")" { RightPar }
+  | "{" { LeftCurly }
+  | "}" { RightCurly }
+  | "+" { Plus }
+  | "*" { Times }
+  | "-" { Minus }
+  | ">" { Greater }
+  | "=" { Equal }
+  | ":=" { Affect }
+  | digits+ as n { Int (int_of_string n) }
+
+#+end_src
+
+Rien de très compliqué.
+
+*** Les variables et la deuxième loi
+
+Nous allons maintenant passer aux
+variables. Elles doivent commencer par une lettre (pour faire pompeux,
+on peut dire un « caractère alphabétique »), éventuellement suivie
+d'un ou plusieurs « caractères alphanumériques » (des chiffres ou des
+lettres, appellation qu'on rencontre plus souvent). Les lettres
+peuvent être en majuscule. Comme tout à l'heure, nous définissons un
+nouvel alias avant d'écrire notre expression régulière :
+
+#+begin_src caml
+let digits = ['0' - '9']
+let alpha = ['a' - 'z' 'A' - 'Z']
+
+rule lexer = parse
+  | "true" { True }
+  | alpha (alpha | digits)* as v { Var v }
+#+end_src
+
+Les plus malins auront remarqué que nous avons ici un deuxième
+problème. En effet, le mot ="true"= est lui-même reconnu à la fois par
+l'expression régulière ="true"=, afin de produire le lexème attendu
+=True= des booléens, mais aussi par l'expression décrivant les
+variables.
+
+On pourrait se débrouiller pour que l'expression des variables ne
+décrive pas ="true"=, mais on serait obligés de faire ça pour chaque
+mot-clef : ce serait un travail long, compliqué, délicat, stupide,
+/bogue-amical/ et déraisonnable. Si vous n'êtes pas convaincus,
+essayez vous-mêmes, et une semaine après, rajoutez un mot-clef à votre
+langage.
+
+Comme tout-à-l'heure avec la plus longue correspondance, une deuxième
+loi existe pour régler ce problème : la priorité à l'expression la
+plus haute. Elle indique qu'en cas de conflit pour une chaîne donnée,
+éventuellement après application de la loi de la plus longue
+correspondance, qui permettra par exemple de ne pas avoir de conflit
+sur la variable ="truefalse"=, le lexème produit est le premier placé
+dans la liste des correspondances du fichier OCamllex. Ainsi, en
+plaçant les mots-clefs avant les variables dans ce fichier, on est
+assuré qu'ils seront bien reconnus comme tels.
+
+*** Les caractères blancs
+
+La prochaine étape est la lecture des caractères blancs. Comme le
+montre le code-exemple du début de ce tutoriel, l'utilisateur de notre
+langage a la possibilité d'utiliser des caractères tels que l'espace,
+la tabulation ou le saut de ligne pour rendre son code plus agréable à
+la lecture. Même s'ils ne correspondent à aucun lexème, nous sommes
+obligés de les noter quelque part dans notre code OCamllex, sinon il
+s'arrêterait dès qu'il en rencontre un avec une erreur lexicale.
+
+Pour cela, nous utiliserons le mot clef =lexbuf=. Il désigne, après
+reconnaissance d'un mot dans le code (correspondant donc à une
+expression régulière), la suite des caractères de ce code. Lorsque
+nous rencontrons un caractère blanc, il nous suffit donc de réappeler
+notre lexer (qui, rappelez-vous, doit renvoyer à chaque appel le
+prochain lexème du code) sur ce =lexbuf= afin qu'il y trouve le lexème
+suivant. Les règles écrites en OCamllex sont automatiquement
+récursives, nous écrirons donc :
+
+#+begin_src caml
+(* On ne prendra en compte que les sauts de lignes, les tabulations et
+les espaces *)
+
+let empty = ['\n' '\t' ' ']
+
+rule lexer = parse
+  | empty+ { lexer lexbuf }
+  | ...
+#+end_src
+
+Notez que nous avons choisi de sauter d'un coup tous les caractères
+blancs consécutifs (à l'aide du signe =+=), mais qu'on aurait très
+bien pu le faire un par un.
+
+*** Les commentaires : une nouvelle règle
+
+Avant d'avoir un analyseur lexical complet, il ne nous reste plus qu'à
+gérer les commentaires. Rappelez-vous qu'ils ont la syntaxe des
+commentaires C : =//= pour commenter sur une ligne (ou une fin de
+ligne), et =/* ... */= pour délimiter des commentaires pouvant
+s'étendre sur plusieurs lignes.
+
+Pour les premiers, c'est relativement simple : il nous suffit
+d'ignorer (comme avec les blancs) tous les caractères compris entre
+=//= et la fin de ligne ='\n'=. Ces caractères peuvent être n'importe
+quoi... sauf eux-mêmes des sauts de lignes ! (Un bonbon pour ceux qui
+avaient deviné.) Je vous laisse écrire l'expression correspondante par
+vous-mêmes, la solution viendra plus bas avec le code OCamllex complet.
+
+Pour les commentaires multilignes, c'est un peu plus compliqué. En
+effet, nous ne pouvons pas nous contenter de faire correspondre un
+=/*= avec le =*/= suivant : nous voulons pouvoir imbriquer des
+commentaires, et ce à n'importe quel niveau. Par exemple, on veut
+pouvoir écrire :
+
+#+begin_src C
+/*
+  Premier niveau de commentaires
+  /*
+    Deuxième niveau
+    /* Troisième niveau */
+  */
+*/
+#+end_src
+
+
+Inutile d'essayer d'écrire l'expression régulière permettant de
+décrire ces commentaires imbriqués, vous n'y arriverez pas pour la
+bonne et simple raison qu'elle n'existe pas. Si vous voulez connaître
+le mot pour briller en société, on dit que ce langage des commentaires
+imbriqués est « non-régulier » (ce qui correspond exactement à « non
+reconnaissable par une expression rationnelle/un automate » - les deux
+revenant exactement au même). Nous allons donc devoir tricher un peu
+pour reconnaître plus de choses qu'il n'en est théoriquement possible
+avec nos expressions régulières.
+
+Pour cela, nous allons écrire une deuxième règle, qui sera appelée dès
+que l'on rencontrera un début de commentaire multiligne =/*=. Elle
+s'occupera d'ignorer tous les caractères jusqu'au =*/= correspondant,
+puis repassera la main à notre règle =lexer=. Afin de trouver la
+fermeture de commentaire correspondante, elle devra connaître le
+niveau de commentaire dans lequel on se trouve : si on en est au
+niveau $n$ et qu'on arrive à un mot =/*=, on passe au niveau $n +
+1$. Si on trouve =*/=, on passe au niveau $n - 1$. Si on était alors
+au premier niveau, il suffit d'appeler la règle =lexer= sur la suite
+du code : on a alors ignoré le commentaire comme prévu.
+
+La définition de cette nouvelle règle se fera avec le mot-clef =and=,
+qui encore une fois ressemble beaucoup dans son fonctionnement à celui
+d'OCaml. La mémorisation du niveau de commentaire pourrait se faire
+avec une référence utilisée dans le code OCaml des résultats (et
+correctement définie en tête de fichier), je vous invite d'ailleurs à
+le faire à titre d'exercice. Pour ce projet, j'utiliserai plutôt un
+argument supplémentaire passé à la règle, correspondant à la
+profondeur des imbrications au moment où cette règle est
+appelée. Lorsqu'on rencontre un =/*= dans =lexer=, on appelle donc la
+règle =comment= avec l'argument =1= (sans oublier l'argument =lexbuf=).
+
+Le corps de cette règle devrait être assez simple pour vous : si on
+croise une ouverture ou une fermeture, on réagit comme expliqué plus
+haut. Si on croise une fin de fichier (=eof=), on renvoie
+=LexingError= : les commentaires multilignes devront obligatoirement
+être fermés correctement (on évite ainsi les erreurs étranges qui
+viennent d'un commentaire qu'on croyait qu'il n'était pas fermé mais
+qu'en fait il n'est fermé). Si on rencontre n'importe quoi d'autre
+(rappelez-vous de =_=...), on rappelle notre règle sur la suite du
+code.
+
+Sans plus tarder, voilà donc le code complet de notre analyseur lexical :
+
+#+begin_src caml
+{
+  open Parser
+  exception LexingError
+}
+
+let digits = ['0' - '9']
+let alpha = ['a' - 'z' 'A' - 'Z']
+let empty = ['\n' '\t' ' ']
+
+rule lexer = parse
+  | "//" [^'\n']* '\n'? { lexer lexbuf }
+  | "/*" { comment 1 lexbuf }
+  | eof { Eof }
+  | empty+ { lexer lexbuf }
+  | "true" { True }
+  | "false" { False }
+  | "not" { Not }
+  | "and" { And }
+  | "or" { Or }
+  | "if" { If }
+  | "while" { While }
+  | "print" { Print }
+  | "(" { LeftPar }
+  | ")" { RightPar }
+  | "{" { LeftCurly }
+  | "}" { RightCurly }
+  | "+" { Plus }
+  | "*" { Times }
+  | "-" { Minus }
+  | ">" { Greater }
+  | "=" { Equal }
+  | ":=" { Affect }
+  | digits+ as n { Int (int_of_string n) }
+  | alpha (alpha | digits)* as v { Var v }
+
+and comment depth = parse
+  | "/*" { comment (depth + 1) lexbuf }
+  | "*/" {
+    if depth = 1 then lexer lexbuf
+    else comment (depth - 1) lexbuf
+  }
+  | eof { raise LexingError }
+  | _ { comment depth lexbuf }
+
+#+end_src
+
+Vous avez donc la solution complète de la gestion des
+commentaires. Vous aurez peut-être remarqué la petite subtilité sur
+les commentaires unilignes : le saut de ligne final est
+facultatif. C'est pour permettre à l'utilisateur d'écrire un
+commentaire uniligne en fin de fichier sans avoir à terminer sa ligne
+finale par un saut de ligne (notez que bon, en vrai il devrait de
+toute façon le faire, mais ne soyons pas plus royalistes que le roy).
+
+*** Utilisation pratique de notre analyseur
+
+Félicitations, vous avez maintenant un analyseur lexical complet ! Il
+ne nous reste plus qu'à voir son utilisation pratique, et nous
+pourrons passer au gros mais intéressant morceau de l'analyse
+syntaxique.
+
+La distribution standard d'OCaml fournit un module =Lexing=, dédié
+comme son nom l'indique à l'analyse lexicale. Il fournit entre autres
+quelques fonctions de base permettant de construire des lexers, que
+vous devriez regarder un jour où vous avez un peu de temps, au moins
+pour la culture. Il nous intéresse parce qu'il fournit également un
+type =lexbuf=, qui doit maintenant vous dire quelque chose : il
+correspond à un « buffer » (un tampon en français) lexical. Ce type a
+un comportement ressemblant aux flux (/stream/ en anglais) pour ceux
+qui connaissent : il s'agit pour simplifier d'une liste dont la tête
+n'est calculée que quand on la demande explicitement (on dit que la
+liste est *paresseuse*), et est supprimée de la liste une fois qu'on
+l'a produite (la liste est *destructive*). Rappelez-vous, le mot-clef
+=lexbuf= d'OCamllex fonctionnait exactement de cette façon : nos
+règles le prenaient en argument, renvoyant le lexème correspondant au
+premier mot rencontré, et ce mot était retiré du « code ». Il s'agit
+donc d'un flux de caractères.
+
+Notre analyseur lexical produira des fonctions dont le paramètre aura
+ce type (en plus des éventuels paramètres supplémentaires de nos
+règles). Il faudra donc, à partir de notre code (qui sera contenu soit
+dans un fichier, soit dans une chaîne de caractères), produire une
+valeur de type =Lexing.lexbuf=. Vous vous en doutez, le module
+=Lexing= propose plusieurs fonctions pour faire ça : vous avez par
+exemple =Lexing.from_string= pour convertir une valeur de type
+=string=, ou =Lexing.from_channel= pour convertir une valeur de type
+=in_channel=.
+
+Pour qu'il génère ces fonctions, exécutez la commande suivante :
+#+begin_src console
+$ ocamllex lexer.mll
+#+end_src
+
+Ocamllex créera alors un fichier =lexer.ml= (vous pouvez changer le
+nom à l'aide de l'option =-o=), qui contiendra les fonctions =lexer=
+et =comment=. =Lexer.lexer= sera donc de type =Lexing.lexbuf ->
+Tokens.token=, ce que vous aurez compris tout seul si vous avez bien
+suivi.
+
+En bonus, voilà un petit programme qui vous permettra de tester votre
+analyseur lexical (appelez-le ~test_lexer.ml~) :
+
+#+begin_src caml
+open Tokens
+
+let string_of_token = function
+  | True -> "True"
+  | False -> "False"
+  | Not -> "Not"
+  | And -> "And"
+  | Or -> "Or"
+  | Greater -> "Greater"
+  | Equal -> "Equal"
+  | LeftPar -> "LeftPar"
+  | RightPar -> "RightPar"
+  | LeftCurly -> "LeftCurly"
+  | RightCurly -> "RightCurly"
+  | Affect -> "Affect"
+  | If -> "If"
+  | While -> "While"
+  | Print -> "Print"
+  | Plus -> "Plus"
+  | Times -> "Times"
+  | Minus -> "Minus"
+  | Int n -> "Int " ^ string_of_int n
+  | Var v -> "Var " ^ v
+  | Eof -> "Eof"
+
+let lexbuf = Lexing.from_channel (open_in Sys.argv.(1))
+
+let rec print_code lexbuf =
+  let t = Lexer.lexer lexbuf in
+    print_endline (string_of_token t);
+    if t <> Eof then print_code lexbuf
+
+let () =  print_code lexbuf
+
+#+end_src
+
+Compilez ce code avec :
+
+#+begin_src console
+$ ocamlbuild test_lexer.native
+#+end_src
+
+Si votre analyseur lexical a été correctement écrit, vous devriez
+avoir un message sans erreur. Vous pouvez ensuite le tester avec :
+
+#+begin_src console
+$ ./test_lexer.native test.imp
+Var n
+Affect
+Int 5
+Var f
+Affect
+Int 1
+While
+Var n
+Greater
+Int 0
+LeftCurly
+Var f
+Affect
+Var f
+Times
+Var n
+Var n
+Affect
+Var n
+Minus
+Int 1
+RightCurly
+Print
+Var f
+Print
+Int 3
+Plus
+Int 4
+Times
+Int 5
+Eof
+#+end_src
+
+Ce résultat ayant été obtenu à partir du fichier =test.imp= suivant :
+
+#+begin_src c :exports none
+// On initialise les variables
+n := 5
+f := 1
+
+/*
+  boucle principale
+  /* commentaire imbriqué */
+*/
+
+while n > 0 {
+    f := f * n
+    n := n - 1
+    }
+
+
+print f
+/* On peut même print-er des expressions numériques */
+print 3 + 4 * 5
+#+end_src
+
+Si vous n'avez pas ce résultat, il y a un problème chez vous. Si vous
+ne trouvez pas, vous avez tout le corrigé du code, profitez-en
+maintenant pour regarder ce qui ne va pas et régler ce problème.
+
+Et voilà, nous en avons terminé avec l'analyse lexicale ! Maintenant
+que vous n'avez plus de problème avec cette partie, nous allons
+pouvoir passer à l'analyse syntaxique. N'hésitez pas, comme je l'ai
+dit plusieurs fois, à aller regarder plus en détail la théorie des
+expressions rationnelles et des automates finis : c'est relativement
+simple, et c'est toujours intéressant (et vous comprendrez
+probablement mieux ce qui va suivre).
