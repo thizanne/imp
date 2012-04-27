@@ -892,7 +892,7 @@ Eof
 
 Ce résultat ayant été obtenu à partir du fichier =test.imp= suivant :
 
-#+begin_src c :exports none
+#+begin_src c
 // On initialise les variables
 n := 5
 f := 1
