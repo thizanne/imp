@@ -668,9 +668,9 @@ bonne et simple raison qu'elle n'existe pas. Si vous voulez connaître
 le mot pour briller en société, on dit que ce langage des commentaires
 imbriqués est « non-régulier » (ce qui correspond exactement à « non
 reconnaissable par une expression rationnelle/un automate » - les deux
-revenant exactement au même). Nous allons donc devoir tricher un peu
-pour reconnaître plus de choses qu'il n'en est théoriquement possible
-avec nos expressions régulières.
+revenant au même). Nous allons donc devoir tricher un peu pour
+reconnaître plus de choses qu'il n'en est théoriquement possible avec
+nos expressions régulières.
 
 Pour cela, nous allons écrire une deuxième règle, qui sera appelée dès
 que l'on rencontrera un début de commentaire multiligne =/*=. Elle
@@ -924,3 +924,685 @@ dit plusieurs fois, à aller regarder plus en détail la théorie des
 expressions rationnelles et des automates finis : c'est relativement
 simple, et c'est toujours intéressant (et vous comprendrez
 probablement mieux ce qui va suivre).
+
+* L'analyse syntaxique
+
+** Arbres syntaxiques
+
+Lors de la première étape, l'analyse lexicale, nous avons transformé
+le code source initial en une suite de lexèmes connus de notre
+langage. Si vous vous souvenez bien, nous allons maintenant lier ces
+lexèmes entre eux : nous allons former des phrases avec les mots que
+nous avons obtenu.
+
+Prenons un exemple simple avec le code suivant :
+
+#+begin_src c
+if f > 0 {
+    print 2 * f + 5
+}
+#+end_src
+
+En oubliant pour l'instant les lexèmes, analysons donc les rapports
+entre les différents mots. Intéressons-nous d'abord à l'intérieur de
+la condition. Nous avons un =print=, suivi d'une opération
+arithmétique. =print= étant un mot-clef connu de notre langage, nous
+savons que cette ligne sera un appel à notre fonction =print=, avec
+comme paramètre =2 * f + 5=. Notons-le de cette façon : =Print ("2 *
+f + 5")=. Il nous faut maintenant analyser ce paramètre pour compléter
+le découpage de la ligne. Il s'agit d'une opération à deux opérateurs,
+=*= et =+=. Nous ne pouvons donc a priori pas faire comme =print=, à
+savoir décomposer directement en une opération et son ou ses
+opérandes. Sauf que... nous avons les règles de priorité ! Ces règles
+nous disent qu'on commence par calculer =2 * f=, puis qu'on ajoute
+=5=. Donc nous avons bien une opération, =+=, dont les opérandes sont
+=2 * 5= et =f=. Autrement dit, quand on a une opération faisant
+intervenir des =*= et des =+=, on commence par analyser l'expression
+=*= puis on prend son résultat comme opérande de =+=. Le résultat
+final de cette ligne est donc : =Print(Add(Mul(2, "f"), 5))=. On fait
+pareil avec le =if= : on peut dire que =If= a deux arguments, ="f >
+0"= et la ligne que nous venons d'analyser, ce qui nous donne
+finalement une décomposition qui, au lieu de s'écrire linéairement,
+se représente plus intuitivement comme l'arbre suivant :
+
+[[file:ast/ast-1.png]]
+
+Comme vous pouvez le constater, c'est un arbre /n-aire/ (le nombre de
+fils de chaque noeud n'est pas fixé - en pratique il ne dépassera pas
+2 dans notre cas), où chaque « mot » de notre langage représente un
+noeud (ou une feuille). Il montre bien la relation entre nos mots : la
+portée de chacun, ses paramètres... Cet arbre particulier est appelé
+*arbre syntaxique abstrait*. On abrège +très souvent+ tout le temps en
+AST (/abstract syntax tree/). Et comme vous l'avez remarqué, à chaque
+noeud ou feuille de notre arbre, on trouve un mot correspondant
+exactement à un lexème du langage : on a donc complètement décomposé
+notre liste de lexèmes dans notre AST.
+
+Afin de vous assurez que vous maîtrisez le concept d'arbre syntaxique,
+vous avez ci-dessous l'arbre syntaxique correspondant au code de test
+de notre analyseur lexical (redonné pour mémoire). Assurez-vous de
+bien comprendre comment il est construit (ce n'est pas très compliqué,
+mais c'est important). Notez que Seq désigne la suite de deux
+instructions.
+
+Voici donc la source :
+
+#+begin_src c
+// On initialise les variables
+n := 5
+f := 1
+
+/*
+  boucle principale
+  /* commentaire imbriqué */
+*/
+
+while n > 0 {
+    f := f * n
+    n := n - 1
+    }
+
+
+print f
+/* On peut même print-er des expressions numériques */
+print 3 + 4 * 5
+#+end_src
+
+Et l'arbre qui en découle :
+
+[[file:ast/ast-2.png]]
+
+
+Vous pouvez remarquer que le constructeur =Seq= prend deux sous-AST en
+paramètre. On aurait aussi pu lui en faire prendre un nombre
+quelconque (donc une liste d'AST) : les deux solutions sont en fait à
+peu près équivalentes, celle que nous avons choisi revenant en fait à
+construire des listes avec =Seq= au lieu de =Cons= (ou =::=, comme
+vous voulez).
+
+Il ne nous reste plus qu'à définir notre AST dans un fichier
+~ast.ml~ :
+
+#+begin_src caml
+type command =
+  | Affect of string * aexp
+  | Print of aexp
+  | If of bexp * command
+  | While of bexp * command
+  | Seq of command * command
+
+and aexp =
+  | Int of int
+  | Var of string
+  | Minus of aexp * aexp
+  | Neg of aexp
+  | Plus of aexp * aexp
+  | Times of aexp * aexp
+
+
+and bexp =
+  | And of bexp * bexp
+  | Equal of aexp * aexp
+  | False
+  | Greater of aexp * aexp
+  | Not of bexp
+  | Or of bexp * bexp
+  | True
+#+end_src
+
+Vous aurez remarqué qu'il est composé de 3 différents types : nous
+reviendrons dessus plus tard. Ils sont a priori assez explicites pour
+que vous n'ayiez pas besoin de plus d'explications.
+
+** Les grammaires hors-contexte
+
+Maintenant que nous connaissons la forme de la sortie de notre
+analyseur syntaxique, il nous faut transformer notre liste de lexèmes
+en AST. Pour faire simple, commençons par les expressions
+arithmétiques. Nous allons les redéfinir plus formellement, de la
+façon suivante :
+1. Les entiers sont des expressions arithmétiques ;
+2. Les variables sont des expressions arithmétiques ;
+3. Si =A= et =B= sont des expressions arithmétiques, alors =A + B=,
+   =A * B= et =A - B= sont des expressions arithmétiques, avec les
+   priorités usuelles ;
+4. Si =A= est une expressions arithmétique, alors =- A= et =(A)= sont
+   des expressions arithmétiques.
+
+Vous aurez remarqué que je note =+= pour avoir des formules plus
+lisibles, mais en réalité il s'agit bien du lexème =Plus=.
+
+Pour l'analyse lexicale, nous avons utilisé les expressions
+rationnelles. Comme il s'agit toujours de reconnaître certains motifs,
+nous pourrions être tentés de recommencer, en remplaçant les
+caractères par des lexèmes. Seulement, ça ne marchera pas. En effet,
+le langage des expressions arithmétiques est /non-régulier/ : on ne
+peut pas le décrire à l'aide d'une expression régulière. En fait, on
+ne peut même pas écrire d'expression régulière qui décrive un mot
+composé de =n= parenthèses ouvrantes suivi de =n= parenthèses
+fermantes. Une explication « avec les mains » à cette contrainte est
+liée aux automates finis, qui, rappelez-vous, sont les objets
+permettant de faire « fonctionner » les expressions régulières. Un
+automate fini est composé d'un certain nombre =N= d'états, et il ne
+peut pas « retenir » plus de =N= caractères. Or ici, on veut pouvoir
+retenir un nombre arbitrairement grand de parenthèses gauches pour
+savoir si on a bien le bon nombre de parenthèses droites pour les
+fermer : il faudrait donc un automate /infini/, qui n'est donc associé
+à aucune expression rationnelle.
+
+Il nous faut donc trouver une autre forme de description de notre
+langage. Elle découle en fait directement de notre définition
+précédente : comme vous l'avez constaté, cette définition est
+récursive, et c'est précisément cette récursivité qui va nous
+permettre de nous en sortir. Écrivons donc :
+
+#+begin_src caml
+A:
+  | Int
+  | Var
+  | A + A
+  | A - A
+  | A * A
+  | - A
+  | (A)
+#+end_src
+
+Cette écriture, qui n'est autre que notre définition avec une syntaxe
+un peu plus formelle (=A= désignant les expressions arithmétiques),
+est celle des *grammaires hors-contexte*. =A= est appelé *terme* de la
+grammaire, et les différents « cas » (=Int=, =A + A=...) des
+*productions*.
+
+On peut comparer les grammaires hors-contexte aux expressions
+rationnelles, mais en plus expressif : on peut décrire (strictement)
+plus de choses à l'aide d'une grammaire hors-contexte qu'en utilisant
+des expressions rationnelles. D'ailleurs, nous allons voir que les
+grammaires hors-contexte « incluent » les expressions
+rationnelles. Pour avoir ces dernières sur un alphabet (tout à l'heure
+les caractères des =String=, ici les lexèmes), il faut avoir, en plus
+de ces caractères et de ε qui désigne le mot vide, 3 choses : la
+concaténation, l'union =|= et l'étoile =*=. Tout le reste n'est que du
+« sucre » : par exemple, =s+= peut s'écrire comme =ss*=, et =s?= peut
+s'écrire comme =s|ε=.
+
+Sans reconstruire rigoureusement les expressions rationnelles, voyons
+comment nous pouvons écrire un terme qui décrit la même chose que
+=(a|b)*ba= :
+
+#+begin_src caml
+A:
+  | a
+
+B:
+  | b
+
+AorB:
+  | A
+  | B
+
+AorBstar:
+  | ε
+  | AorB AorBstar
+
+Final:
+  | AorBstar B A
+#+end_src
+
+Comme vous pouvez le voir, nous avons un terme (=Final=) qui décrit la
+même chose que notre expression rationnelle initiale. Ce qui est
+intéressant ici, c'est de voir comment nous avons redéfini l'étoile et
+le tube. Les grammaires hors-contexte permettent donc de faire plus de
+choses que les expressions rationnelles. On pourrait donc les utiliser
+aussi pour l'analyse lexicale... Sauf que, comme vous pouvez le voir
+sur l'exemple précédent, les expressions rationnelles permettent en
+général une écriture beaucoup plus concise (et l'implémentation
+derrière est moins lourde).
+
+Nous allons nous arrêter ici pour la théorie et passer à l'utilisation
+pratique de ce nouvel outil. Comme pour les expressions rationnelles,
+j'invite le lecteur curieux à se renseigner plus en détail sur les
+grammaires hors-contexte : il reste pas mal de choses à dire
+dessus. Vous apprendrez ainsi la signification de termes comme /LL(*)/
+ou /LR(1)/, vous découvrirez l'analyse descendante et les automates à
+pile. En poussant un peu plus loin vous entendrez parler de
+classification des langages, et de tout un tas de choses intéressantes
+qui vous permettront de briller dans les dîners de la haute société.
+
+
+** Menhir
+
+*** Présentation
+
+L'outil que nous allons utiliser pour l'analyse syntaxique s'appelle
+Menhir. Tout comme Ocamllex pour l'analyse lexicale, il s'agit d'un
+/générateur d'analyseur syntaxique/ : à partir de la description des
+termes d'une grammaire, il génère un fichier OCaml qui prendra en
+entrée un flot de lexèmes (sortant d'Ocamllex) et produira en sortie
+notre AST.
+
+Il s'agit d'une adaptation pour OCaml d'un outil conçu à l'origine
+pour le langage C, appelé Bison (qui est lui-même une alternative
+libre au logiciel Yacc). Il existe également un outil appelé Ocamlyacc
+dont vous entendrez certainement parler : ils se ressemblent beaucoup,
+mais Menhir est strictement meilleur, c'est pourquoi je vous conseille
+de l'utiliser dès que vous en avez la possibilité. Pour la petite
+histoire, Ocamlyacc est l'outil utilisé pour l'analyse syntaxique du
+langage OCaml (tout comme Ocamllex est utilisé pour son analyse
+lexicale), car il a l'avantage dans ce cas précis de simplifier le
+/bootstrap/ du langage, étant écrit en C (et non pas en OCaml comme
+Menhir).
+
+Cette partie vous apprendra ce qu'il faut de Menhir pour interpréter
+notre petit langage, mais il restera encore beaucoup de choses à dire
+dessus. Je vous encourage à en lire la documentation pour en savoir
+plus (par exemple sur le traitement des erreurs et sur la librairie
+standard, que nous n'abordons pas du tout ici).
+
+*** Installation
+
+Menhir n'est pas fourni de base avec l'installation d'OCaml, il faudra
+donc l'installer explicitement vous-mêmes.
+
+Si vous êtes sous Windows, je ne sais pas comment l'installer, mais je
+suis à peu près persuadé que c'est possible (si quelqu'un l'a fait et
+peut écrire quelques lignes expliquant la manipulation, je serais ravi
+de les inclure ici).
+
+Plusieurs distributions Linux l'incluent dans leurs paquets. Pour les
+utilisateurs d'Archlinux, il existe un paquet ~ocaml-menhir~ dans
+l'AUR. Pour les autres distributions, je vous laisse chercher par
+vous-mêmes, ça ne devrait pas être très compliqué.
+
+Si vous êtes sur un unixoïde ne comprenant pas Menhir dans ses
+paquets, ou que vous préférez installer vos logiciels à la main,
+rendez-vous à [[http://cristal.inria.fr/~fpottier/menhir/][cette adresse]]. Téléchargez les sources de Menhir,
+décompressez-les (=tar -xvf le_fichier.tar.gz=), placez-vous dans le
+répertoire qui les contient et lancez les commandes (vous avez besoin
+de l'outil ~Make~, qui est de toute façon un indispensable que vous
+avez certainement déjà) :
+
+#+begin_src console
+$ make
+$ make install
+#+end_src
+
+Si tout s'est passé sans erreur, vous disposez maintenant de Menhir
+sur votre machine. Vous pouvez le vérifier en observant le résultat de
+la commande suivante :
+
+#+begin_src console
+$ menhir
+Usage: menhir <options> <filenames>
+#+end_src
+
+*** Redéfinissons nos lexèmes
+
+Notre analyseur lexical prendra en entrée un flux de lexèmes, il faut
+donc qu'il les connaisse d'une façon ou d'une autre. Pour cela, nous
+allons écrire les lignes suivantes, dans un fichier que vous
+appellerez ~parser.mly~, afin de tous les redéfinir :
+
+#+begin_src caml
+%token True False Not And Or
+%token Greater Equal
+%token LeftPar RightPar LeftCurly RightCurly
+%token Affect
+%token If While Print
+%token Plus Times Minus
+%token <int> Int
+%token <string> Var
+%token Eof
+#+end_src
+
+Chaque ligne commence par =%token=, suivi d'un ou plusieurs lexèmes
+(nous les avons ici regroupés dans un ordre plus ou moins
+« thématique »). Certains lexèmes peuvent prendre un paramètre : c'est
+le cas pour nous de =Int= et =Var=. Le type de ce paramètre est alors
+spécifié avant le token, entre chevrons : =< ... >=.
+
+Notez qu'une fois que nous aurons terminé l'écriture de notre
+analyseur syntaxique, nous n'aurons plus besoin du fichier
+~tokens.ml~ : le type qu'il définit sera contenu dans le code OCaml
+produit par Menhir.
+
+Après ces lignes, ajoutez un séparateur =%%= sur une ligne. Il servira
+à différencier le /header/ du fichier (le terme anglais est
+systématiquement utilisé) des termes et productions les utilisant, que
+nous placerons après.
+
+*** Passons aux choses sérieuses
+
+Commençons par écrire les productions des expressions
+arithmétiques. Notre terme s'appellera =aexp=. Nous commençons par sa
+définition structurelle :
+
+#+begin_src caml
+aexp:
+| Int
+| Var
+| aexp Plus aexp
+| aexp Minus aexp
+| aexp Times aexp
+| Minus aexp
+| LeftPar aexp RightPar
+#+end_src
+
+Le terme est maintenant défini, mais tel quel, il ne nous servira pas
+beaucoup pour la création de l'AST. Il faut pouvoir récupérer les
+informations qu'il contient et en faire quelque chose.
+
+Pour cela, chaque production sera suivie, entre accolades ={...}=,
+d'un code OCaml qui construira l'AST correspondant. Pour récupérer la
+valeur associée à un élément de production, vous pouvez le nommer,
+comme le montre la ligne suivante :
+
+#+begin_src caml
+aexp:
+| x = Int { Ast.Int x }
+#+end_src
+
+Rappelez-vous que nous avons défini le token =Int= comme prenant un
+paramètre de type =int=. =x= désigne ce paramètre dans la ligne que
+nous venons d'écrire. Pour les éléments étant eux-mêmes des termes de
+la grammaire, la valeur ainsi capturée correspond à la valeur renvoyée
+par l'analyseur syntaxique lorsqu'il analyse la phrase
+correspondante. C'est donc la valeur que vous écrivez entre
+accolades. On peut donc se servir de ces valeurs pour construire
+récursivement notre ast :
+
+#+begin_src caml
+aexp:
+| x = Int { Ast.Int x }
+| v = Var { Ast.Var v }
+| x = aexp Plus y = aexp { Ast.Plus (x, y) }
+| x = aexp Minus y = aexp { Ast.Minus (x, y) }
+| x = aexp Times y = aexp { Ast.Times (x, y) }
+| Minus x = aexp  { Ast.Neg x }
+| LeftPar x = aexp RightPar { x }
+#+end_src
+
+Sauf que, comme vous l'aurez évidemment remarqué, il y a un problème :
+notre parseur (il paraît que le terme existe en français) ne connait
+pas la priorité de =Times= sur =Plus=. En fait, il ne connait même pas
+la « priorité » de =Plus= sur =Plus=, c'est-à-dire l'associativité :
+comment réduire =1 + 2 + 3=, la racine doit-elle être le premier =+=
+ou le deuxième ?
+
+Par défaut, Menhir ne soulèvera pas d'erreur, mais seulement un
+warning : il appliquera des règles conventionnelles (du style de
+celles de notre lexeur). Seulement, si tout à l'heure c'était la façon
+canonique de fonctionner, la règle pour l'analyse syntaxique est de ne
+pas laisser passer ce genre de conflits (appelé « severe conflict »)
+où le parseur doit décider tout seul. Pour cela, nous allons déclarer
+dans le /header/ l'associativité et la priorité de nos différents
+opérateurs. Pour cela, nous utiliserons les mots-clefs =%left=,
+=%right= et =%nonassoc= : ils définissent chacun l'associativité du
+lexème qu'ils précèdent, et un lexème écrit après un autre est
+considéré comme prioritaire sur le premier.
+
+Écrivons donc :
+
+#+begin_src caml
+%left Plus Minus
+%left Times
+%nonassoc neg
+
+%%
+#+end_src
+
+À quoi sert le =%nonassoc=, puisqu'il n'apporte aucune information
+supplémentaire d'associativité ? Ici, il sert à définir la priorité de
+la négation unaire, qui doit être réduite avant les autres
+opérations. Mais attention, l'opérateur =Minus= de cette négation est
+le même que celui de la soustraction : on ne peut donc pas s'en servir
+dans notre règle. On écrit donc (arbitrairement) =%neg= pour nommer la
+règle, et on y fera référence dans la production à l'aide du mot-clef
+=%prec=.
+
+Voici donc le code complet à notre stade de l'analyseur syntaxique :
+
+#+begin_src caml
+
+%token True False Not And Or
+%token Greater Equal
+%token LeftPar RightPar LeftCurly RightCurly
+%token Affect
+%token If While Print
+%token Plus Times Minus
+%token <int> Int
+%token <string> Var
+%token Eof
+
+%left Plus Minus
+%left Times
+%nonassoc neg
+
+%%
+
+aexp:
+| x = Int { Ast.Int x }
+| v = Var { Ast.Var v }
+| x = aexp Plus y = aexp { Ast.Plus (x, y) }
+| x = aexp Minus y = aexp { Ast.Minus (x, y) }
+| x = aexp Times y = aexp { Ast.Times (x, y) }
+| Minus x = aexp  { Ast.Neg x } %prec neg
+| LeftPar x = aexp RightPar { x }
+
+#+end_src
+
+Les conflits ainsi résolus à l'aide de règles de priorité s'appellent
+les « benign conflicts ». Menhir ne vous préviendra pas de leur
+présence (en réalité, il est possible de les éviter complètement, mais
+ça mènerait à une multiplication assez lourde du nombre de termes qui
+n'est donc pas intéressante d'un point de vue pratique). 
+
+Si vous avez bien compris ce que nous avons fait jusque là, le reste
+ne devrait vous poser aucun problème. Nous pouvons par exemple
+enchaîner directement avec les expressions booléennes :
+
+#+begin_src caml
+%left Or
+%left And
+%nonassoc Not
+%left Plus Minus
+%left Times
+%nonassoc neg
+
+%%
+bexp:
+| True { Ast.True }
+| False { Ast.False }
+| x = aexp Equal y = aexp { Ast.Equal (x, y) }
+| x = aexp Greater y = aexp { Ast.Greater (x, y) }
+| a = bexp And b = bexp { Ast.And (a, b) }
+| a = bexp Or b = bexp { Ast.Or (a, b) }
+| Not b = bexp { Ast.Not b }
+| LeftPar b = bexp RightPar { b }
+#+end_src
+
+*** Où l'on termine l'écriture de notre AST avec les « commandes » du langage
+
+Jusqu'ici, le découpage de l'AST était assez intuitif (les expressions
+arithmétiques et booléennes se prêtant naturellement très bien à une
+transformation en arbre). Pour la suite, voici comment nous allons
+procéder : il reste les affectations, les boucles, les conditions, les
+=print= et les séquences de ces opérations. Tout cela est regroupé
+dans le type =Ast.command=. Nous aurons un terme =command=, qui
+correspondra à chacune de ces possibilités prise individuellement
+(donc pas la séquence), une règle =sequence= qui correspondra à une
+liste de commandes successives, et une règle =prgm= qui correspond
+à une =sequence= suivie de =Eof=.
+
+Il est important de retenir cette dernière particularité : vous devez
+penser à gérer correctement =Eof= dans votre parseur, sans quoi vous
+aurez des erreurs de type ~end-of-stream conflict~ et, pour faire
+simple, ça ne marchera pas. Une fois ce découpage fait, le codage de
+ce qui reste du parseur est relativement aisé, en voici donc la source
+complète :
+
+#+begin_src caml
+%{
+(* Here can come OCaml code *)
+%}
+
+%token True False Not And Or
+%token Greater Equal
+%token LeftPar RightPar LeftCurly RightCurly
+%token Affect
+%token If While Print
+%token Plus Times Minus
+%token <int> Int
+%token <string> Var
+%token Eof
+
+%start <Ast.command> prgm
+
+%left Or
+%left And
+%nonassoc Not
+%left Plus Minus
+%left Times
+%nonassoc neg
+
+%%
+
+prgm:
+| s = sequence Eof { s }
+
+sequence:
+| c = command { c }
+| c = command s = sequence { Ast.Seq (c, s) }
+
+command:
+| v = Var Affect x = aexp { Ast.Affect (v, x) }
+| Print x = aexp  { Ast.Print x }
+| If b = bexp LeftCurly c = sequence RightCurly { Ast.If (b, c) }
+| While b = bexp LeftCurly c = sequence RightCurly { Ast.While (b, c) }
+
+aexp:
+| x = Int { Ast.Int x }
+| v = Var { Ast.Var v }
+| x = aexp Plus y = aexp { Ast.Plus (x, y) }
+| x = aexp Minus y = aexp { Ast.Minus (x, y) }
+| x = aexp Times y = aexp { Ast.Times (x, y) }
+| Minus x = aexp  { Ast.Neg x } %prec neg
+| LeftPar x = aexp RightPar { x }
+
+bexp:
+| True { Ast.True }
+| False { Ast.False }
+| x = aexp Equal y = aexp { Ast.Equal (x, y) }
+| x = aexp Greater y = aexp { Ast.Greater (x, y) }
+| a = bexp And b = bexp { Ast.And (a, b) }
+| a = bexp Or b = bexp { Ast.Or (a, b) }
+| Not b = bexp { Ast.Not b }
+| LeftPar b = bexp RightPar { b }
+#+end_src
+
+Il reste donc deux petites choses à expliquer, que vous aurez
+remarquées vous-mêmes si vous êtes attentifs. Tout d'abord, la
+possibilité d'écrire du code OCaml en tête du parseur. On aurait ainsi
+pu y écrire =open Ast= pour éviter d'écrire =Ast= devant chaque noeud
+produit - nous ne l'avons pas fait ici pour qu'on distingue bien les
+noeuds de l'arbre syntaxique des lexèmes, beaucoup ayant le même
+nom. La deuxième chose est la déclaration =%start= : tout-à-l'heure,
+ocamllex générait une fonction pour chaque règle de notre analyseur
+lexical. Ici, Menhir génèrera une fonction d'analyse syntaxique pour
+chaque terme déclaré à l'aide de cette commande. Vous aurez noté qu'on
+doit écrire nous-mêmes le type de sortie de la fonction produite : en
+l'occurrence, =Ast.command= (qui est le type auquel appartient le
+constructeur =Seq=).
+
+*** Compilons !
+
+C'est maintenant le moment de vérité : à l'aide de Menhir, vous allez
+pouvoir compiler le fichier que vous venez d'écrire vers le code OCaml
+de l'analyseur syntaxique. Exécutez donc les commandes suivantes :
+
+#+begin_src console
+$ ocamlc -c ast.ml
+$ menhir --infer --explain parser.mly
+#+end_src
+
+Si tout se passe bien... vous ne verrez rien. Mais si vous listez
+votre répertoire, 4 nouveaux fichiers seront apparus : =ast.cmi= et
+=ast.cmo=, qui correspondent à la compilation de notre fichier
+=ast.ml= (dont Menhir aura besoin à cause du type qu'il définit), et
+=parser.ml= et =parser.mli=. Vous pouvez d'ailleurs regarder
+l'interface de notre nouveau /parser/ :
+
+#+begin_src console
+$ cat parser.mli
+exception Error
+
+type token = 
+  | While
+  | Var of (string)
+  | True
+  | Times
+  | RightPar
+  | RightCurly
+  | Print
+  | Plus
+  | Or
+  | Not
+  | Minus
+  | LeftPar
+  | LeftCurly
+  | Int of (int)
+  | If
+  | Greater
+  | False
+  | Equal
+  | Eof
+  | And
+  | Affect
+
+
+val prgm: (Lexing.lexbuf -> token) -> Lexing.lexbuf -> (Ast.command)
+
+#+end_src
+
+Comme vous pouvez le constater, on exporte le type de nos lexèmes,
+ainsi que la fonction dont je vous ai parlé tout à l'heure (nous
+étudierons son type et son utilisation en détail dans la dernière
+partie), et une exception qui sera utilisée en cas d'erreur de syntaxe
+sur les codes que nous analyserons.
+
+Comme je vous l'ai annoncé plus haut, vous pouvez maintenant remplacer
+=open Tokens= par =open Parser= dans votre fichier =lexer.mll= : c'est
+notre fichier Menhir qui aura désormais la lourde responsabilité de
+définir les lexèmes de notre langage.
+
+*** Au secours, ça ne marche pas !
+
+Si vous avez essayé d'écrire votre code Menhir vous-mêmes, je vous en
+félicite. Par contre vous aurez peut-être des erreurs ou des
+avertissements que vous ne comprenez pas. Les options que nous avons
+donné à Menhir servent à cela : =--infer= lui demande de vérifier
+lui-même la correction de notre typage dans l'analyseur syntaxique (ce
+qui fait plus d'erreur à la compilation vers OCaml, mais garantit que
+le fichier =.ml= produit est bien typé), et =--explain= lui demande de
+détailler les conflits dans un fichier =parser.conflicts=.
+
+Pour pouvoir bien comprendre ce compte-rendu, il vous faudrait des
+explications plus poussées sur le fonctionnement de l'analyse
+syntaxique et des automates à pile, qui n'ont pas leur place ici. Je
+vous encourage donc encore une fois à vous documenter sur le sujet :
+c'est indispensable pour une bonne maîtrise des outils que nous avons
+présentés.
+
+Toutefois, en lisant les quelques lignes générées, vous devriez avoir
+une idée des productions qui posent problème. En raisonnant par
+vous-mêmes, vous pourrez trouver les cas qui soulèvent un conflit et
+chercher une manière de les éviter. Ce n'est pas toujours très facile,
+mais c'est important de bien analyser la grammaire que vous avez
+définie : souvent, on a de très bonnes idées à ce sujet, avant de se
+rendre compte qu'elles ne peuvent tout simplement pas être utilisées
+à cause d'une ambiguité qu'on ne voit pas tout de suite « à l'oeil
+nu ».
+
+Une fois que tout fonctionne bien, ça y est, vous en avez fini avec
+l'analyse syntaxique - et avec ça, le plus gros du travail sur notre
+interpréteur. Encore un dernier petit effort et vous aurez enfin votre
+petit langage de programmation !
