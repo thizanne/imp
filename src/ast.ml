@@ -13,7 +13,6 @@ and aexp =
   | Plus of aexp * aexp
   | Times of aexp * aexp
 
-
 and bexp =
   | And of bexp * bexp
   | Equal of aexp * aexp

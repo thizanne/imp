@@ -1,0 +1,53 @@
+graph G {
+        1 -- {2; 3}
+        2 -- {4; 5}
+        3 -- {6; 7}
+        6 -- {8; 9}
+        7 -- {10; 11}
+        10 -- {12; 13}
+        12 -- {16; 17}
+        13 -- {18; 19}
+        18 -- {22; 23}
+        23 -- {28; 29}
+        19 -- {24; 25}
+        25 -- {30; 31}
+        11 -- {14; 15}
+        14 -- {20}
+        15 -- {21}
+        21 -- {26; 27}
+        27 -- {32; 33}
+        1[label=Seq]
+        2[label=":="]
+        3[label="Seq"]
+        4[label="n"]
+        5[label="5"]
+        6[label=":="]
+        7[label="Seq"]
+        8[label="f"]
+        9[label="1"]
+        10[label="While"]
+        11[label="Seq"]
+        12[label=">"]
+        13[label="Seq"]
+        14[label="Print"]
+        15[label="Print"]
+        16[label="n"]
+        17[label="0"]
+        18[label=":="]
+        19[label=":="]
+        20[label="f"]
+        21[label="+"]
+        22[label="f"]
+        23[label="*"]
+        24[label="n"]
+        25[label="-"]
+        26[label="3"]
+        27[label="*"]
+        28[label="f"]
+        29[label="n"]
+        30[label="n"]
+        31[label="1"]
+        32[label="4"]
+        33[label="5"]
+}
+        

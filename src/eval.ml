@@ -4,17 +4,17 @@ type env = (string * int) list
 let rec update (e : env) v x = match e with
   | [] -> [(v, x)]
   | (w, y) :: s -> 
-    if v = w then (v, x) :: s
-    else (w, y) :: update s v x
-
+      if v = w then (v, x) :: s
+      else (w, y) :: update s v x
+        
 
 let rec eval_prgm env = function
   | Affect (v, x) -> update env v (eval_aexp env x)
   | Print x -> print_int (eval_aexp env x); print_newline (); env
   | If (b, c) -> 
-    if eval_bexp env b then eval_prgm env c else env
+      if eval_bexp env b then eval_prgm env c else env
   | While (b, c) as w -> 
-    if eval_bexp env b then let e = eval_prgm env c in eval_prgm e w else env
+      if eval_bexp env b then let e = eval_prgm env c in eval_prgm e w else env
   | Seq (c1, c2) -> let e = eval_prgm env c1 in eval_prgm e c2
 
 and eval_bexp env = function
